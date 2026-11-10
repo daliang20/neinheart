@@ -17,9 +17,9 @@
 <canvas id="app" tabindex="0" aria-label="Phantom Forest Router"></canvas>
 <div id="status">Loading...</div>
 <script type="module">
-  import { mount } from './js/host.js?v=a3ea68ee59';
+  import { mount } from './js/host.js?v=659843f2c5';
   const status = document.getElementById('status');
-  mount(document.getElementById('app'), 'wasm/maplestory.wasm?v=a3ea68ee59')
+  mount(document.getElementById('app'), 'wasm/maplestory.wasm?v=659843f2c5')
     .then(() => status.remove())
     .catch((e) => {
       console.error(e);
