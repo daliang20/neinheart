@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=175ef661a4';
-import { GLRenderer } from './gl.js?v=175ef661a4';
+import { loadModule } from './runtime.js?v=a3ea68ee59';
+import { GLRenderer } from './gl.js?v=a3ea68ee59';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -25,6 +25,9 @@ const PASS_CTRL = new Set(['KeyR', 'KeyT', 'KeyW', 'KeyL', 'Tab', 'PageUp', 'Pag
 export async function mount(canvas, wasmUrl, opts = {}) {
   const mod = await loadModule(wasmUrl, {
     clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
+    // settings survive a reload; storage can be missing or throw (private mode, blocked site data)
+    storageGet: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    storageSet: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* not saved this time */ } },
   });
   const x = mod.exports;
   const content = mod.contents[0];

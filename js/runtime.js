@@ -114,6 +114,18 @@ export async function loadModule(source, hooks = {}) {
       const text = str(p, n);
       if (hooks.clipboardSet) hooks.clipboardSet(text);
     },
+    // saved settings (src/settings.c): the host decides where they live (localStorage in the page)
+    js_storage_get(kp, kn, out, cap) {
+      const v = hooks.storageGet ? hooks.storageGet(str(kp, kn)) : null;
+      if (v == null) return -1;
+      const b = enc.encode(v);
+      if (b.length > cap) return -1;
+      u8().set(b, out);
+      return b.length;
+    },
+    js_storage_set(kp, kn, vp, vn) {
+      if (hooks.storageSet) hooks.storageSet(str(kp, kn), str(vp, vn));
+    },
   };
   for (const f of ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'exp', 'expm1', 'log', 'log10', 'log2', 'log1p', 'cbrt'])
     env['math_' + f] = Math[f];
