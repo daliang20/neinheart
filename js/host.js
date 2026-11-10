@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=f09fc72a03';
-import { GLRenderer } from './gl.js?v=f09fc72a03';
+import { loadModule } from './runtime.js?v=175ef661a4';
+import { GLRenderer } from './gl.js?v=175ef661a4';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -71,11 +71,13 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   sizeCanvas();
 
   // ---- frame loop: runs only while something changes, plus timed wakeups ----
+  let fling = null;   // a flick's glide after the finger lifts: { vx, vy (px/ms), mx, my, t }
   let dirty = true, animating = false, wakeAt = 0, last = 0, raf = 0, buttons = 0;
   // A finger lifting fires pointerup then pointerleave before the next frame. Leaving at once would
   // move the mouse off the control before CUI sees the release, so a tap would never click; the
   // leave waits until a frame has run.
   let leavePending = false;
+  let flingStep = null;   // set by the touch code: advances a flick's glide by one frame
   const schedule = () => { if (!raf) raf = requestAnimationFrame(step); };
   const poke = () => { dirty = true; schedule(); };
   function paint() {
@@ -92,6 +94,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     const dt = last ? Math.min((now - last) / 1000, 0.25) : 1 / 60;
     last = now;
     dirty = false;
+    if (fling) flingStep(now);
     x.inst_frame(inst, dt, gl ? 0 : 1);
     if (leavePending) { leavePending = false; x.inst_mouse_leave(inst); poke(); }   // repaint without the hover
     paint();
@@ -117,34 +120,80 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   const takeOver = () => { if (!released) { released = true; if (x.inst_release_scripted(inst)) poke(); } };
   for (const t of ['pointerenter', 'pointerdown', 'wheel', 'keydown']) on(t, takeOver, { capture: true });
 
-  // touch: a vertical swipe scrolls, a sideways one drags
+  // touch: a vertical swipe scrolls, a sideways one drags. The content follows the finger 1:1 (CUI eases
+  // wheel scrolling, so motion is off while a finger scrolls) and keeps going after a flick, like a
+  // native page; a touch during the glide stops it without pressing what is under the finger.
   let touch = null;
+  const reducedMotion = () => (matchMedia('(prefers-reduced-motion: reduce)').matches || (x.ms_reduced_motion && x.ms_reduced_motion())) ? 1 : 0;
+  const linesPerPx = () => h / canvas.getBoundingClientRect().height / 44;   // pixels to wheel lines
   const cancelPress = () => {
     x.inst_mouse_move(inst, -10000, -10000);
     for (let b = 0; b < 3; b++) if (buttons & (1 << b)) x.inst_mouse_button(inst, b, 0);
     buttons = 0;
     x.inst_frame(inst, 0, 0);
   };
-  on('pointerdown', (e) => { if (e.pointerType === 'touch') touch = { x: e.clientX, y: e.clientY, mode: '' }; }, { capture: true });
+  const endScroll = () => { x.inst_set_reduced_motion(inst, reducedMotion()); };
+  const stopFling = () => { if (fling) { fling = null; x.inst_mouse_leave(inst); poke(); } };
+  flingStep = (now) => {
+    const dt = Math.min(now - fling.t, 50);
+    fling.t = now;
+    const decay = Math.exp(-dt / 325);   // iOS-like deceleration
+    fling.vx *= decay; fling.vy *= decay;
+    if (Math.hypot(fling.vx, fling.vy) < 0.03) { stopFling(); return; }
+    const k = linesPerPx();
+    x.inst_mouse_move(inst, fling.mx, fling.my);
+    x.inst_scroll(inst, fling.vx * dt * k, fling.vy * dt * k);
+    poke();
+  };
+  on('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') { stopFling(); return; }
+    touch = { x: e.clientX, y: e.clientY, mode: '', samples: [] };
+    if (fling) {   // catch the glide: this touch only stops it (or starts a new scroll)
+      const fast = Math.hypot(fling.vx, fling.vy) > 0.15;
+      fling = null;
+      if (fast) { touch.mode = 'caught'; e.stopImmediatePropagation(); e.preventDefault(); }
+    }
+  }, { capture: true });
   on('pointermove', (e) => {
     if (!touch || e.pointerType !== 'touch') return;
     const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
-    if (!touch.mode && Math.hypot(dx, dy) > 8) {
+    if ((!touch.mode || touch.mode === 'caught') && Math.hypot(dx, dy) > 8) {
       touch.mode = Math.abs(dy) > Math.abs(dx) ? 'scroll' : 'drag';
-      if (touch.mode === 'scroll') cancelPress();
+      if (touch.mode === 'scroll') { cancelPress(); x.inst_set_reduced_motion(inst, 1); }
     }
+    if (touch.mode === 'caught') { e.stopImmediatePropagation(); return; }
     if (touch.mode === 'scroll') {
       const [mx, my] = pos(e);
       x.inst_mouse_move(inst, mx, my);
-      const k = h / canvas.getBoundingClientRect().height / 44;   // pixels to wheel lines
+      const k = linesPerPx();
       x.inst_scroll(inst, (e.clientX - touch.x) * k, (e.clientY - touch.y) * k);
       touch.x = e.clientX; touch.y = e.clientY;
+      touch.samples.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+      while (touch.samples.length > 2 && e.timeStamp - touch.samples[0].t > 100) touch.samples.shift();
       poke();
       e.stopImmediatePropagation();
     }
   }, { capture: true });
-  on('pointercancel', () => { if (touch) cancelPress(); touch = null; }, { capture: true });
-  on('pointerup', (e) => { if (touch && touch.mode === 'scroll') { x.inst_mouse_leave(inst); e.stopImmediatePropagation(); poke(); } if (e.pointerType === 'touch') touch = null; }, { capture: true });
+  on('pointercancel', () => { if (touch) { cancelPress(); if (touch.mode === 'scroll') endScroll(); } touch = null; }, { capture: true });
+  on('pointerup', (e) => {
+    if (e.pointerType !== 'touch') return;
+    if (touch && touch.mode === 'scroll') {
+      endScroll();
+      const s = touch.samples, a = s[0], b = s[s.length - 1];
+      const span = b && e.timeStamp - a.t;
+      if (s.length >= 2 && span > 0 && span < 150 && b.t - a.t > 0) {
+        const vx = (b.x - a.x) / (b.t - a.t), vy = (b.y - a.y) / (b.t - a.t);   // px per ms
+        if (Math.hypot(vx, vy) > 0.2) {
+          const [mx, my] = pos(e);
+          fling = { vx, vy, mx, my, t: performance.now() };
+        }
+      }
+      if (!fling) x.inst_mouse_leave(inst);
+      e.stopImmediatePropagation();
+      poke();
+    } else if (touch && touch.mode === 'caught') e.stopImmediatePropagation();
+    touch = null;
+  }, { capture: true });
 
   on('pointermove', (e) => {
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -184,6 +233,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   });
   on('contextmenu', (e) => e.preventDefault());
   on('wheel', (e) => {
+    fling = null;
     const k = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? 10 : 1 / 100;
     let dx = -e.deltaX * k, dy = -e.deltaY * k;
     if (e.shiftKey && !e.deltaX) { dx = dy; dy = 0; }
