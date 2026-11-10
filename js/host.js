@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=3364f55e25';
-import { GLRenderer } from './gl.js?v=3364f55e25';
+import { loadModule } from './runtime.js?v=7fa03d4768';
+import { GLRenderer } from './gl.js?v=7fa03d4768';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -82,7 +82,7 @@ function mediaLayer(canvas) {
 let gifList = [];
 async function loadGifs() {
   const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(r.status); return r; };
-  try { gifList = await (await get('gifs.json?v=3364f55e25')).json(); return; } catch (e) { /* not deployed: try the list */ }
+  try { gifList = await (await get('gifs.json?v=7fa03d4768')).json(); return; } catch (e) { /* not deployed: try the list */ }
   try {
     const text = await (await get('gifs.txt')).text();
     gifList = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
@@ -98,6 +98,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   const mod = await loadModule(wasmUrl, {
     mediaPlace: (...a) => media.place(...a),
     gifs: () => gifList,
+    touchOnly: () => matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches,
     clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
     // settings survive a reload; storage can be missing or throw (private mode, blocked site data)
     storageGet: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },

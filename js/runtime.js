@@ -127,6 +127,8 @@ export async function loadModule(source, hooks = {}) {
       if (hooks.storageSet) hooks.storageSet(str(kp, kn), str(vp, vn));
     },
     // the channel roll's GIF list (web/gifs.txt, loaded by the page): how many, and one URL
+    // a phone or tablet: touch and no mouse (the page hides tools that only make sense on a computer)
+    js_touch_only: () => (hooks.touchOnly && hooks.touchOnly() ? 1 : 0),
     js_gif_count: () => (hooks.gifs ? hooks.gifs().length : 0),
     js_gif_url(i, out, cap) {
       const list = hooks.gifs ? hooks.gifs() : [];
