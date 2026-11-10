@@ -126,6 +126,10 @@ export async function loadModule(source, hooks = {}) {
     js_storage_set(kp, kn, vp, vn) {
       if (hooks.storageSet) hooks.storageSet(str(kp, kn), str(vp, vn));
     },
+    // pictures the page shows over the canvas (src/web_media.c); rects in points
+    js_media_place(slot, up, un, x, y, w, h, cx, cy, cw, ch, radius, opacity) {
+      if (hooks.mediaPlace) hooks.mediaPlace(slot, str(up, un), x, y, w, h, cx, cy, cw, ch, radius, opacity);
+    },
   };
   for (const f of ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'exp', 'expm1', 'log', 'log10', 'log2', 'log1p', 'cbrt'])
     env['math_' + f] = Math[f];

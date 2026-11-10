@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=8207a4cd6a';
-import { GLRenderer } from './gl.js?v=8207a4cd6a';
+import { loadModule } from './runtime.js?v=08bbaf8562';
+import { GLRenderer } from './gl.js?v=08bbaf8562';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -22,8 +22,55 @@ const CURSORS = ['default', 'pointer', 'text', 'ew-resize', 'ns-resize', 'move',
 const PASS = new Set(['F5', 'F11', 'F12']);
 const PASS_CTRL = new Set(['KeyR', 'KeyT', 'KeyW', 'KeyL', 'Tab', 'PageUp', 'PageDown']);
 
+// Pictures over the canvas (src/web_media.h): one <img> per slot, placed during a frame and hidden after
+// any frame that did not place it. They let pointer events through to the canvas underneath.
+function mediaLayer(canvas) {
+  const slots = new Map();   // slot -> { box, img, url, seen }
+  const layer = document.createElement('div');
+  layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;overflow:hidden;';
+  canvas.after(layer);
+  return {
+    place(slot, url, x, y, w, h, cx, cy, cw, ch, radius, opacity) {
+      let m = slots.get(slot);
+      if (!m) {
+        // the box sits at the rect and clips to what is visible; the picture keeps its shape inside it
+        const box = document.createElement('div');
+        box.style.cssText = 'position:absolute;left:0;top:0;display:flex;align-items:center;justify-content:center;' +
+          'transition:opacity .25s ease-out;opacity:0;';
+        const img = document.createElement('img');
+        img.decoding = 'async';
+        img.referrerPolicy = 'no-referrer';
+        img.alt = '';
+        img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
+        img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+        box.appendChild(img);
+        layer.appendChild(box);
+        m = { box, img, url: '' };
+        slots.set(slot, m);
+      }
+      if (m.url !== url) { m.url = url; m.img.style.visibility = ''; m.img.src = url; }
+      const r = canvas.getBoundingClientRect(), k = r.width / Math.max(1, canvas.clientWidth || r.width);
+      const st = m.box.style;
+      st.left = (r.left + x * k) + 'px'; st.top = (r.top + y * k) + 'px';
+      st.width = (w * k) + 'px'; st.height = (h * k) + 'px';
+      m.img.style.borderRadius = (radius * k) + 'px';
+      // only the visible part (the rect can be scrolled partly out of view)
+      const t = Math.max(0, cy - y), l = Math.max(0, cx - x);
+      const b = Math.max(0, (y + h) - (cy + ch)), rt = Math.max(0, (x + w) - (cx + cw));
+      st.clipPath = t + b >= h || l + rt >= w ? 'inset(50%)' : `inset(${t * k}px ${rt * k}px ${b * k}px ${l * k}px)`;
+      st.opacity = String(opacity);
+      st.display = 'flex';
+      m.seen = true;
+    },
+    begin() { for (const m of slots.values()) m.seen = false; },
+    end() { for (const m of slots.values()) if (!m.seen) m.box.style.display = 'none'; },
+  };
+}
+
 export async function mount(canvas, wasmUrl, opts = {}) {
+  const media = mediaLayer(canvas);
   const mod = await loadModule(wasmUrl, {
+    mediaPlace: (...a) => media.place(...a),
     clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
     // settings survive a reload; storage can be missing or throw (private mode, blocked site data)
     storageGet: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -98,7 +145,9 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     last = now;
     dirty = false;
     if (fling) flingStep(now);
+    media.begin();
     x.inst_frame(inst, dt, gl ? 0 : 1);
+    media.end();
     if (leavePending) { leavePending = false; x.inst_mouse_leave(inst); poke(); }   // repaint without the hover
     paint();
     animating = !!x.inst_needs_redraw(inst);
