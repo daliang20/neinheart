@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=08bbaf8562';
-import { GLRenderer } from './gl.js?v=08bbaf8562';
+import { loadModule } from './runtime.js?v=3364f55e25';
+import { GLRenderer } from './gl.js?v=3364f55e25';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -48,7 +48,15 @@ function mediaLayer(canvas) {
         m = { box, img, url: '' };
         slots.set(slot, m);
       }
-      if (m.url !== url) { m.url = url; m.img.style.visibility = ''; m.img.src = url; }
+      if (m.url !== url) {
+        // a new picture starts hidden: no fade, so the old one never shows over a roll and the new one
+        // never shows before it is meant to
+        m.box.style.transition = 'none';
+        m.box.style.opacity = '0';
+        void m.box.offsetWidth;
+        m.box.style.transition = 'opacity .25s ease-out';
+        m.url = url; m.img.style.visibility = ''; m.img.src = url;
+      }
       const r = canvas.getBoundingClientRect(), k = r.width / Math.max(1, canvas.clientWidth || r.width);
       const st = m.box.style;
       st.left = (r.left + x * k) + 'px'; st.top = (r.top + y * k) + 'px';
@@ -58,6 +66,8 @@ function mediaLayer(canvas) {
       const t = Math.max(0, cy - y), l = Math.max(0, cx - x);
       const b = Math.max(0, (y + h) - (cy + ch)), rt = Math.max(0, (x + w) - (cx + cw));
       st.clipPath = t + b >= h || l + rt >= w ? 'inset(50%)' : `inset(${t * k}px ${rt * k}px ${b * k}px ${l * k}px)`;
+      // fade in, but hide at once: nothing from the last roll lingers over the next one
+      st.transition = opacity > 0 ? 'opacity .25s ease-out' : 'none';
       st.opacity = String(opacity);
       st.display = 'flex';
       m.seen = true;
@@ -67,10 +77,27 @@ function mediaLayer(canvas) {
   };
 }
 
+// The channel roll's GIFs. The deploy resolves web/gifs.txt into gifs.json; a local build has only
+// gifs.txt, so its direct picture links are used as they are (Tenor ones in the small size).
+let gifList = [];
+async function loadGifs() {
+  const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(r.status); return r; };
+  try { gifList = await (await get('gifs.json?v=3364f55e25')).json(); return; } catch (e) { /* not deployed: try the list */ }
+  try {
+    const text = await (await get('gifs.txt')).text();
+    gifList = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
+      const m = l.match(/^https?:\/\/(?:media\d*|c)\.tenor\.com\/(?:m\/)?([\w-]{11})[\w-]{5}(?:\/|$)/);
+      return m ? `https://media.tenor.com/${m[1]}AAAAM/tenor.gif` : /^https:\/\/.*\.(gif|webp|png|jpe?g)(\?.*)?$/i.test(l) ? l : null;
+    }).filter(Boolean);
+  } catch (e) { /* no GIFs */ }
+}
+
 export async function mount(canvas, wasmUrl, opts = {}) {
   const media = mediaLayer(canvas);
+  loadGifs(); // needed only by the time someone rolls
   const mod = await loadModule(wasmUrl, {
     mediaPlace: (...a) => media.place(...a),
+    gifs: () => gifList,
     clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
     // settings survive a reload; storage can be missing or throw (private mode, blocked site data)
     storageGet: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },

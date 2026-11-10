@@ -126,6 +126,16 @@ export async function loadModule(source, hooks = {}) {
     js_storage_set(kp, kn, vp, vn) {
       if (hooks.storageSet) hooks.storageSet(str(kp, kn), str(vp, vn));
     },
+    // the channel roll's GIF list (web/gifs.txt, loaded by the page): how many, and one URL
+    js_gif_count: () => (hooks.gifs ? hooks.gifs().length : 0),
+    js_gif_url(i, out, cap) {
+      const list = hooks.gifs ? hooks.gifs() : [];
+      if (i < 0 || i >= list.length) return -1;
+      const b = enc.encode(list[i]);
+      if (b.length > cap) return -1;
+      u8().set(b, out);
+      return b.length;
+    },
     // pictures the page shows over the canvas (src/web_media.c); rects in points
     js_media_place(slot, up, un, x, y, w, h, cx, cy, cw, ch, radius, opacity) {
       if (hooks.mediaPlace) hooks.mediaPlace(slot, str(up, un), x, y, w, h, cx, cy, cw, ch, radius, opacity);

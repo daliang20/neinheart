@@ -17,9 +17,9 @@
 <canvas id="app" tabindex="0" aria-label="Maple Tools"></canvas>
 <div id="status">Loading...</div>
 <script type="module">
-  import { mount } from './js/host.js?v=08bbaf8562';
+  import { mount } from './js/host.js?v=3364f55e25';
   const status = document.getElementById('status');
-  mount(document.getElementById('app'), 'wasm/maplestory.wasm?v=08bbaf8562')
+  mount(document.getElementById('app'), 'wasm/maplestory.wasm?v=3364f55e25')
     .then(() => status.remove())
     .catch((e) => {
       console.error(e);
