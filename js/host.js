@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=659843f2c5';
-import { GLRenderer } from './gl.js?v=659843f2c5';
+import { loadModule } from './runtime.js?v=3fc896c4d5';
+import { GLRenderer } from './gl.js?v=3fc896c4d5';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
