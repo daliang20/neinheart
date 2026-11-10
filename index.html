@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>Phantom Forest Router</title>
+<title>Maple Tools</title>
 <style>
   html, body { margin: 0; height: 100%; background: #111318; overflow: hidden; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
@@ -14,12 +14,12 @@
 </style>
 </head>
 <body>
-<canvas id="app" tabindex="0" aria-label="Phantom Forest Router"></canvas>
+<canvas id="app" tabindex="0" aria-label="Maple Tools"></canvas>
 <div id="status">Loading...</div>
 <script type="module">
-  import { mount } from './js/host.js?v=3fc896c4d5';
+  import { mount } from './js/host.js?v=8207a4cd6a';
   const status = document.getElementById('status');
-  mount(document.getElementById('app'), 'wasm/maplestory.wasm?v=3fc896c4d5')
+  mount(document.getElementById('app'), 'wasm/maplestory.wasm?v=8207a4cd6a')
     .then(() => status.remove())
     .catch((e) => {
       console.error(e);
