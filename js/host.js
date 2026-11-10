@@ -72,6 +72,10 @@ export async function mount(canvas, wasmUrl, opts = {}) {
 
   // ---- frame loop: runs only while something changes, plus timed wakeups ----
   let dirty = true, animating = false, wakeAt = 0, last = 0, raf = 0, buttons = 0;
+  // A finger lifting fires pointerup then pointerleave before the next frame. Leaving at once would
+  // move the mouse off the control before CUI sees the release, so a tap would never click; the
+  // leave waits until a frame has run.
+  let leavePending = false;
   const schedule = () => { if (!raf) raf = requestAnimationFrame(step); };
   const poke = () => { dirty = true; schedule(); };
   function paint() {
@@ -89,6 +93,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     last = now;
     dirty = false;
     x.inst_frame(inst, dt, gl ? 0 : 1);
+    if (leavePending) { leavePending = false; x.inst_mouse_leave(inst); poke(); }   // repaint without the hover
     paint();
     animating = !!x.inst_needs_redraw(inst);
     const next = x.inst_next_wakeup(inst);
@@ -149,6 +154,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     poke();
   });
   on('pointerdown', (e) => {
+    leavePending = false;
     if (e.pointerType === 'mouse' && e.button > 2) return;
     canvas.focus({ preventScroll: true });
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointers have no capture */ }
@@ -171,7 +177,11 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   };
   on('pointerup', up);
   on('pointercancel', up);
-  on('pointerleave', () => { if (!buttons) { x.inst_mouse_leave(inst); poke(); } });
+  on('pointerleave', (e) => {
+    if (buttons) return;
+    if (e.pointerType === 'touch') leavePending = true; else x.inst_mouse_leave(inst);
+    poke();
+  });
   on('contextmenu', (e) => e.preventDefault());
   on('wheel', (e) => {
     const k = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? 10 : 1 / 100;
