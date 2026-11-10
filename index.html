@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Phantom Forest Router</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111318; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: #9aa3ad; padding: 24px; text-align: center;
+            font: 14px system-ui, -apple-system, "Segoe UI", sans-serif; pointer-events: none; }
+  #status.error { color: #ff8a80; pointer-events: auto; }
+</style>
+</head>
+<body>
+<canvas id="app" tabindex="0" aria-label="Phantom Forest Router"></canvas>
+<div id="status">Loading...</div>
+<script type="module">
+  import { mount } from './js/host.js';
+  const status = document.getElementById('status');
+  mount(document.getElementById('app'), 'wasm/maplestory.wasm')
+    .then(() => status.remove())
+    .catch((e) => {
+      console.error(e);
+      status.classList.add('error');
+      status.textContent = location.protocol === 'file:'
+        ? 'Serve this folder over HTTP (for example: python -m http.server -d dist/web). Browsers do not load wasm from file:// pages.'
+        : 'Could not start: ' + e.message;
+    });
+</script>
+</body>
+</html>

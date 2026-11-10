@@ -1,0 +1,225 @@
+// Runs one CUI app module full-window: creates the wasm instance, feeds it
+// mouse, keyboard and clipboard input, and draws each frame with WebGL2 (the
+// port of CUI's OpenGL renderer in gl.js) or, when that is unavailable, with
+// CUI's software renderer through a 2D canvas. Add ?software to the URL to
+// force the software path.
+//
+// runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
+
+import { loadModule } from './runtime.js';
+import { GLRenderer } from './gl.js';
+
+// cui_key values (third_party/CUI/include/cui/cui.h)
+const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+const KEYS = { Tab: 1, Enter: 2, NumpadEnter: 2, Escape: 3, Backspace: 4, Delete: 5, Space: 6,
+  ArrowLeft: 7, ArrowRight: 8, ArrowUp: 9, ArrowDown: 10, Home: 11, End: 12, PageUp: 13, PageDown: 14,
+  Minus: 51, Equal: 52, Comma: 53, Period: 54, Slash: 55 };
+for (let i = 0; i < 26; i++) KEYS['Key' + String.fromCharCode(65 + i)] = 15 + i;
+for (let i = 0; i < 10; i++) { KEYS['Digit' + i] = 41 + i; KEYS['Numpad' + i] = 41 + i; }
+for (let i = 1; i <= 12; i++) KEYS['F' + i] = 55 + i;
+const CURSORS = ['default', 'pointer', 'text', 'ew-resize', 'ns-resize', 'move', 'not-allowed'];
+// browser shortcuts that keep working while the app has focus
+const PASS = new Set(['F5', 'F11', 'F12']);
+const PASS_CTRL = new Set(['KeyR', 'KeyT', 'KeyW', 'KeyL', 'Tab', 'PageUp', 'PageDown']);
+
+export async function mount(canvas, wasmUrl, opts = {}) {
+  const mod = await loadModule(wasmUrl, {
+    clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
+  });
+  const x = mod.exports;
+  const content = mod.contents[0];
+  if (!content) throw new Error('the module has no app (its main must call cui_app_run)');
+  if (content.name) document.title = content.name;
+
+  // renderer
+  const params = new URLSearchParams(location.search);
+  let gl = null, ctx2d = null;
+  if (opts.renderer !== 'software' && !params.has('software')) {
+    try { gl = new GLRenderer(canvas); } catch (e) { console.warn('[host] WebGL2 unavailable, using the software renderer:', e.message); }
+  }
+  if (!gl) ctx2d = canvas.getContext('2d', { alpha: false });
+  const owner = gl ? 1 : 0;
+  if (gl) mod.registerOwner(owner, gl);
+
+  // theme: the app's own choice, else the system setting
+  const prefersDark = matchMedia('(prefers-color-scheme: dark)');
+  const dark = content.theme >= 0 ? content.theme : (prefersDark.matches ? 1 : 0);
+  const accent = content.accent >= 0 ? content.accent : 0;
+
+  const ratio = () => Math.min(window.devicePixelRatio || 1, 3);
+  const logical = () => {
+    const r = canvas.getBoundingClientRect();
+    return [Math.max(320, Math.round(r.width)), Math.max(240, Math.round(r.height))];
+  };
+  let [w, h] = logical();
+  let scale = ratio();
+  const inst = x.inst_new(content.index, w, h, scale, dark, accent, owner);
+  if (content.theme < 0) prefersDark.addEventListener('change', (e) => { x.inst_set_theme(inst, e.matches ? 1 : 0); poke(); });
+  x.inst_set_reduced_motion(inst, matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 0);
+
+  function sizeCanvas() {
+    const W = Math.round(w * scale), H = Math.round(h * scale);
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  }
+  function resize() {
+    [w, h] = logical();
+    scale = ratio();
+    x.inst_resize(inst, w, h, scale);
+    sizeCanvas();
+    poke();
+  }
+  sizeCanvas();
+
+  // ---- frame loop: runs only while something changes, plus timed wakeups ----
+  let dirty = true, animating = false, wakeAt = 0, last = 0, raf = 0, buttons = 0;
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(step); };
+  const poke = () => { dirty = true; schedule(); };
+  function paint() {
+    if (gl) { gl.draw(mod, inst); return; }
+    const px = mod.pixels(inst);
+    if (canvas.width !== px.w || canvas.height !== px.h) { canvas.width = px.w; canvas.height = px.h; }
+    ctx2d.putImageData(new ImageData(px.data, px.w, px.h), 0, 0);
+  }
+  function step(now) {
+    raf = 0;
+    if (document.hidden) { dirty = true; return; }
+    const wake = wakeAt && now >= wakeAt;
+    if (!dirty && !animating && !wake) return;
+    const dt = last ? Math.min((now - last) / 1000, 0.25) : 1 / 60;
+    last = now;
+    dirty = false;
+    x.inst_frame(inst, dt, gl ? 0 : 1);
+    paint();
+    animating = !!x.inst_needs_redraw(inst);
+    const next = x.inst_next_wakeup(inst);
+    wakeAt = next >= 0 ? now + next * 1000 : 0;
+    const cur = CURSORS[x.inst_cursor(inst)] || 'default';
+    if (canvas.style.cursor !== cur) canvas.style.cursor = cur;
+    if (animating) schedule(); else last = 0;
+  }
+  setInterval(() => { if (wakeAt && performance.now() >= wakeAt) schedule(); }, 50);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poke(); });
+  new ResizeObserver(resize).observe(canvas);
+  window.addEventListener('resize', resize);
+
+  // ---- input (the same mapping CUI's own site uses) ----
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * (w / r.width), (e.clientY - r.top) * (h / r.height)];
+  };
+  const on = (t, f, o) => canvas.addEventListener(t, f, o);
+  let released = false;
+  const takeOver = () => { if (!released) { released = true; if (x.inst_release_scripted(inst)) poke(); } };
+  for (const t of ['pointerenter', 'pointerdown', 'wheel', 'keydown']) on(t, takeOver, { capture: true });
+
+  // touch: a vertical swipe scrolls, a sideways one drags
+  let touch = null;
+  const cancelPress = () => {
+    x.inst_mouse_move(inst, -10000, -10000);
+    for (let b = 0; b < 3; b++) if (buttons & (1 << b)) x.inst_mouse_button(inst, b, 0);
+    buttons = 0;
+    x.inst_frame(inst, 0, 0);
+  };
+  on('pointerdown', (e) => { if (e.pointerType === 'touch') touch = { x: e.clientX, y: e.clientY, mode: '' }; }, { capture: true });
+  on('pointermove', (e) => {
+    if (!touch || e.pointerType !== 'touch') return;
+    const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
+    if (!touch.mode && Math.hypot(dx, dy) > 8) {
+      touch.mode = Math.abs(dy) > Math.abs(dx) ? 'scroll' : 'drag';
+      if (touch.mode === 'scroll') cancelPress();
+    }
+    if (touch.mode === 'scroll') {
+      const [mx, my] = pos(e);
+      x.inst_mouse_move(inst, mx, my);
+      const k = h / canvas.getBoundingClientRect().height / 44;   // pixels to wheel lines
+      x.inst_scroll(inst, (e.clientX - touch.x) * k, (e.clientY - touch.y) * k);
+      touch.x = e.clientX; touch.y = e.clientY;
+      poke();
+      e.stopImmediatePropagation();
+    }
+  }, { capture: true });
+  on('pointercancel', () => { if (touch) cancelPress(); touch = null; }, { capture: true });
+  on('pointerup', (e) => { if (touch && touch.mode === 'scroll') { x.inst_mouse_leave(inst); e.stopImmediatePropagation(); poke(); } if (e.pointerType === 'touch') touch = null; }, { capture: true });
+
+  on('pointermove', (e) => {
+    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    const lastEv = events[events.length - 1] || e;
+    const [mx, my] = pos(lastEv);
+    x.inst_mouse_move(inst, mx, my);
+    poke();
+  });
+  on('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button > 2) return;
+    canvas.focus({ preventScroll: true });
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointers have no capture */ }
+    const [mx, my] = pos(e);
+    x.inst_mouse_move(inst, mx, my);
+    const b = e.button === 2 ? 1 : e.button === 1 ? 2 : 0;
+    buttons |= 1 << b;
+    x.inst_mouse_button(inst, b, 1);
+    poke();
+    e.preventDefault();
+  });
+  const up = (e) => {
+    const b = e.button === 2 ? 1 : e.button === 1 ? 2 : 0;
+    if (!(buttons & (1 << b))) return;
+    buttons &= ~(1 << b);
+    const [mx, my] = pos(e);
+    x.inst_mouse_move(inst, mx, my);
+    x.inst_mouse_button(inst, b, 0);
+    poke();
+  };
+  on('pointerup', up);
+  on('pointercancel', up);
+  on('pointerleave', () => { if (!buttons) { x.inst_mouse_leave(inst); poke(); } });
+  on('contextmenu', (e) => e.preventDefault());
+  on('wheel', (e) => {
+    const k = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? 10 : 1 / 100;
+    let dx = -e.deltaX * k, dy = -e.deltaY * k;
+    if (e.shiftKey && !e.deltaX) { dx = dy; dy = 0; }
+    const [mx, my] = pos(e);
+    x.inst_mouse_move(inst, mx, my);
+    x.inst_scroll(inst, dx, dy);
+    e.preventDefault();
+    poke();
+  }, { passive: false });
+  let pasteMods = 0;
+  on('keydown', (e) => {
+    if (PASS.has(e.code) || ((e.ctrlKey || e.metaKey) && PASS_CTRL.has(e.code)) || (e.ctrlKey && e.shiftKey && e.code === 'KeyI')) return;
+    const mods = (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') { pasteMods = mods; return; }   // the paste event follows
+    const key = KEYS[e.code];
+    if (key) x.inst_key(inst, key, 1, mods);
+    else if (MODKEYS.has(e.key)) x.inst_key(inst, 0, 1, mods);
+    if (e.key.length >= 1 && [...e.key].length === 1 && !e.ctrlKey && !e.metaKey) mod.text(inst, e.key);
+    if (key || e.key.length === 1) e.preventDefault();
+    poke();
+  });
+  on('keyup', (e) => {
+    const key = KEYS[e.code];
+    const mods = (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+    if (!key) { if (MODKEYS.has(e.key)) { x.inst_key(inst, 0, 0, mods); poke(); } return; }
+    x.inst_key(inst, key, 0, mods);
+    poke();
+  });
+  on('paste', (e) => {
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    mod.setClipboardCache(text);
+    x.inst_key(inst, KEYS.KeyV, 1, pasteMods || 2);
+    x.inst_key(inst, KEYS.KeyV, 0, pasteMods || 2);
+    e.preventDefault();
+    poke();
+  });
+  on('focus', () => { x.inst_focus(inst, 1); poke(); });
+  on('blur', () => {
+    for (const k of Object.values(KEYS)) x.inst_key(inst, k, 0, 0);   // never leave a key stuck
+    x.inst_focus(inst, 0);
+    poke();
+  });
+
+  canvas.focus({ preventScroll: true });
+  x.inst_frame(inst, 0, gl ? 0 : 1);
+  paint();
+  schedule();
+  return { module: mod, instance: inst, renderer: gl ? 'WebGL2' : 'Software' };
+}
