@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=7fa03d4768';
-import { GLRenderer } from './gl.js?v=7fa03d4768';
+import { loadModule } from './runtime.js?v=d81bfaa76b';
+import { GLRenderer } from './gl.js?v=d81bfaa76b';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -82,7 +82,7 @@ function mediaLayer(canvas) {
 let gifList = [];
 async function loadGifs() {
   const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(r.status); return r; };
-  try { gifList = await (await get('gifs.json?v=7fa03d4768')).json(); return; } catch (e) { /* not deployed: try the list */ }
+  try { gifList = await (await get('gifs.json?v=d81bfaa76b')).json(); return; } catch (e) { /* not deployed: try the list */ }
   try {
     const text = await (await get('gifs.txt')).text();
     gifList = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
