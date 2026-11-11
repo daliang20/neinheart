@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=d81bfaa76b';
-import { GLRenderer } from './gl.js?v=d81bfaa76b';
+import { loadModule } from './runtime.js?v=f81018719e';
+import { GLRenderer } from './gl.js?v=f81018719e';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -82,9 +82,9 @@ function mediaLayer(canvas) {
 let gifList = [];
 async function loadGifs() {
   const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(r.status); return r; };
-  try { gifList = await (await get('gifs.json?v=d81bfaa76b')).json(); return; } catch (e) { /* not deployed: try the list */ }
+  try { gifList = await (await get(new URL('gifs.json?v=f81018719e', siteBase))).json(); return; } catch (e) { /* not deployed: try the list */ }
   try {
-    const text = await (await get('gifs.txt')).text();
+    const text = await (await get(new URL('gifs.txt', siteBase))).text();
     gifList = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
       const m = l.match(/^https?:\/\/(?:media\d*|c)\.tenor\.com\/(?:m\/)?([\w-]{11})[\w-]{5}(?:\/|$)/);
       return m ? `https://media.tenor.com/${m[1]}AAAAM/tenor.gif` : /^https:\/\/.*\.(gif|webp|png|jpe?g)(\?.*)?$/i.test(l) ? l : null;
@@ -92,10 +92,32 @@ async function loadGifs() {
   } catch (e) { /* no GIFs */ }
 }
 
+// One address per page: <site>/phantom-forest/ and so on, where <site> is the folder above js/ (the
+// site can live under a path, like GitHub Pages' /<repo>/). The deploy gives each page a folder with a
+// copy of index.html, so an address opened directly loads the app too.
+const siteBase = new URL('..', import.meta.url);
+function routeName() {
+  const path = decodeURIComponent(location.pathname);
+  const base = decodeURIComponent(siteBase.pathname);
+  if (!path.startsWith(base)) return '';
+  return path.slice(base.length).replace(/(^|\/)index\.html$/, '').replace(/^\/+|\/+$/g, '');
+}
+
 export async function mount(canvas, wasmUrl, opts = {}) {
   const media = mediaLayer(canvas);
   loadGifs(); // needed only by the time someone rolls
+  let routeSerial = 1, onRoute = () => {};
+  window.addEventListener('popstate', () => { routeSerial++; onRoute(); });
   const mod = await loadModule(wasmUrl, {
+    routeSerial: () => routeSerial,
+    routeGet: routeName,
+    routeSet: (name, title, replace) => {
+      document.title = title;
+      if (name === routeName()) return;
+      const url = new URL(name ? encodeURI(name) + '/' : '', siteBase);
+      url.search = location.search;
+      history[replace ? 'replaceState' : 'pushState'](null, '', url);
+    },
     mediaPlace: (...a) => media.place(...a),
     gifs: () => gifList,
     touchOnly: () => matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches,
@@ -158,6 +180,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   let flingStep = null;   // set by the touch code: advances a flick's glide by one frame
   const schedule = () => { if (!raf) raf = requestAnimationFrame(step); };
   const poke = () => { dirty = true; schedule(); };
+  onRoute = poke;
   function paint() {
     if (gl) { gl.draw(mod, inst); return; }
     const px = mod.pixels(inst);

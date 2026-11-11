@@ -138,6 +138,19 @@ export async function loadModule(source, hooks = {}) {
       u8().set(b, out);
       return b.length;
     },
+    // the page's address (src/web_media.c): a serial that changes on load, Back and Forward, the
+    // current page name, and showing a page's address
+    js_route_serial: () => (hooks.routeSerial ? hooks.routeSerial() : 0),
+    js_route_get(out, cap) {
+      if (!hooks.routeGet) return -1;
+      const b = enc.encode(hooks.routeGet());
+      if (b.length > cap) return -1;
+      u8().set(b, out);
+      return b.length;
+    },
+    js_route_set(np, nn, tp, tn, replace) {
+      if (hooks.routeSet) hooks.routeSet(str(np, nn), str(tp, tn), !!replace);
+    },
     // pictures the page shows over the canvas (src/web_media.c); rects in points
     js_media_place(slot, up, un, x, y, w, h, cx, cy, cw, ch, radius, opacity) {
       if (hooks.mediaPlace) hooks.mediaPlace(slot, str(up, un), x, y, w, h, cx, cy, cw, ch, radius, opacity);
