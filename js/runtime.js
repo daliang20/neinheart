@@ -151,6 +151,14 @@ export async function loadModule(source, hooks = {}) {
     js_route_set(np, nn, tp, tn, replace) {
       if (hooks.routeSet) hooks.routeSet(str(np, nn), str(tp, tn), !!replace);
     },
+    // the browser's screen share (src/pages/equip-reader/capture.c): state -1 none, 0 off, 1 asking,
+    // 2 live, 3 refused; grab copies the current frame (RGBA, w x h) into the module's memory
+    js_share_state: () => (hooks.share ? hooks.share.state() : -1),
+    js_share_start() { if (hooks.share) hooks.share.start(); },
+    js_share_stop() { if (hooks.share) hooks.share.stop(); },
+    js_share_width: () => (hooks.share ? hooks.share.width() : 0),
+    js_share_height: () => (hooks.share ? hooks.share.height() : 0),
+    js_share_grab: (p, w, h) => (hooks.share && hooks.share.grab(new Uint8Array(mem.buffer, p, w * h * 4), w, h) ? 1 : 0),
     // pictures the page shows over the canvas (src/web_media.c); rects in points
     js_media_place(slot, up, un, x, y, w, h, cx, cy, cw, ch, radius, opacity) {
       if (hooks.mediaPlace) hooks.mediaPlace(slot, str(up, un), x, y, w, h, cx, cy, cw, ch, radius, opacity);

@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=88f2f000a7';
-import { GLRenderer } from './gl.js?v=88f2f000a7';
+import { loadModule } from './runtime.js?v=6fc7381763';
+import { GLRenderer } from './gl.js?v=6fc7381763';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -82,7 +82,7 @@ function mediaLayer(canvas) {
 let gifList = [];
 async function loadGifs() {
   const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(r.status); return r; };
-  try { gifList = await (await get(new URL('gifs.json?v=88f2f000a7', siteBase))).json(); return; } catch (e) { /* not deployed: try the list */ }
+  try { gifList = await (await get(new URL('gifs.json?v=6fc7381763', siteBase))).json(); return; } catch (e) { /* not deployed: try the list */ }
   try {
     const text = await (await get(new URL('gifs.txt', siteBase))).text();
     gifList = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
@@ -90,6 +90,45 @@ async function loadGifs() {
       return m ? `https://media.tenor.com/${m[1]}AAAAM/tenor.gif` : /^https:\/\/.*\.(gif|webp|png|jpe?g)(\?.*)?$/i.test(l) ? l : null;
     }).filter(Boolean);
   } catch (e) { /* no GIFs */ }
+}
+
+// The equipment reader's screen share (src/pages/equip-reader/capture.h). The shared video plays in a
+// <video> that is never added to the page; a grab draws its current frame on a canvas and copies the
+// pixels out. state: 0 off, 1 asking, 2 live, 3 refused or failed. Browsers only ask from a click; the
+// app calls start in the frame after the click, which is still within the click's user activation.
+function screenShare() {
+  let state = 0, stream = null, video = null, ctx = null;
+  const stop = () => {
+    if (stream) for (const t of stream.getTracks()) t.stop();
+    stream = null; video = null; state = 0;
+  };
+  return {
+    state: () => state,
+    start() {
+      if (state === 1 || state === 2) return;
+      state = 1;
+      navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'never' }, audio: false }).then((s) => {
+        stream = s;
+        video = document.createElement('video');
+        video.muted = true; video.playsInline = true; video.srcObject = s;
+        video.play().catch(() => {});
+        // the browser's own "Stop sharing" button, or the shared window closing
+        s.getVideoTracks()[0].addEventListener('ended', stop);
+        state = 2;
+      }, () => { state = 3; });
+    },
+    stop,
+    width: () => (state === 2 && video ? video.videoWidth : 0),
+    height: () => (state === 2 && video ? video.videoHeight : 0),
+    grab(out, w, h) {
+      if (state !== 2 || !video || video.videoWidth !== w || video.videoHeight !== h) return false;
+      if (!ctx) ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+      if (ctx.canvas.width !== w || ctx.canvas.height !== h) { ctx.canvas.width = w; ctx.canvas.height = h; }
+      ctx.drawImage(video, 0, 0, w, h);
+      out.set(ctx.getImageData(0, 0, w, h).data);
+      return true;
+    },
+  };
 }
 
 // One address per page: <site>/phantom-forest/ and so on, where <site> is the folder above js/ (the
@@ -120,6 +159,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     },
     mediaPlace: (...a) => media.place(...a),
     gifs: () => gifList,
+    share: navigator.mediaDevices?.getDisplayMedia ? screenShare() : null,
     touchOnly: () => matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches,
     clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
     // settings survive a reload; storage can be missing or throw (private mode, blocked site data)
