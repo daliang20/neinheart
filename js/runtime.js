@@ -159,6 +159,13 @@ export async function loadModule(source, hooks = {}) {
     js_share_width: () => (hooks.share ? hooks.share.width() : 0),
     js_share_height: () => (hooks.share ? hooks.share.height() : 0),
     js_share_grab: (p, w, h) => (hooks.share && hooks.share.grab(new Uint8Array(mem.buffer, p, w * h * 4), w, h) ? 1 : 0),
+    // a picture pasted into the equipment reader (src/pages/equip-reader/capture_web.c): state 0 nothing
+    // new, 1 one waiting, 2 the Paste button found none; grab copies it (RGBA, w x h) and lets it go
+    js_paste_state: () => (hooks.paste ? hooks.paste.state() : 0),
+    js_paste_request() { if (hooks.paste) hooks.paste.request(); },
+    js_paste_width: () => (hooks.paste ? hooks.paste.width() : 0),
+    js_paste_height: () => (hooks.paste ? hooks.paste.height() : 0),
+    js_paste_grab: (p, w, h) => (hooks.paste && hooks.paste.grab(new Uint8Array(mem.buffer, p, w * h * 4), w, h) ? 1 : 0),
     // pictures the page shows over the canvas (src/web_media.c); rects in points
     js_media_place(slot, up, un, x, y, w, h, cx, cy, cw, ch, radius, opacity) {
       if (hooks.mediaPlace) hooks.mediaPlace(slot, str(up, un), x, y, w, h, cx, cy, cw, ch, radius, opacity);

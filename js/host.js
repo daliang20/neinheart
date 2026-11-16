@@ -6,8 +6,8 @@
 //
 // runtime.js and gl.js are CUI's own files (third_party/CUI/web/site/js, MIT).
 
-import { loadModule } from './runtime.js?v=8669f9b166';
-import { GLRenderer } from './gl.js?v=8669f9b166';
+import { loadModule } from './runtime.js?v=59d7e59845';
+import { GLRenderer } from './gl.js?v=59d7e59845';
 
 // cui_key values (third_party/CUI/include/cui/cui.h)
 const MODKEYS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -82,7 +82,7 @@ function mediaLayer(canvas) {
 let gifList = [];
 async function loadGifs() {
   const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(r.status); return r; };
-  try { gifList = await (await get(new URL('gifs.json?v=8669f9b166', siteBase))).json(); return; } catch (e) { /* not deployed: try the list */ }
+  try { gifList = await (await get(new URL('gifs.json?v=59d7e59845', siteBase))).json(); return; } catch (e) { /* not deployed: try the list */ }
   try {
     const text = await (await get(new URL('gifs.txt', siteBase))).text();
     gifList = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => {
@@ -131,6 +131,65 @@ function screenShare() {
   };
 }
 
+// A picture pasted into the equipment reader (src/pages/equip-reader/capture.h): a Snipping Tool or Print
+// Screen copy. Ctrl+V on the page brings it with the paste event (take); the Paste button reads the
+// clipboard (request), which the browser may ask permission for. Either way the picture is decoded to RGBA
+// and waits until the app grabs it; ready() runs a frame so the app sees it. state: 0 nothing new, 1 a
+// picture waiting, 2 the button found none (cleared by reading it).
+function pastedPicture() {
+  let pic = null, failed = false, serial = 0;
+  const api = { ready: () => {} };
+  async function decode(blob) {
+    const mine = ++serial;   // a later paste wins over a slower earlier one
+    try {
+      const bmp = await createImageBitmap(blob);
+      const { width, height } = bmp;
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+      ctx.canvas.width = width; ctx.canvas.height = height;
+      ctx.drawImage(bmp, 0, 0);
+      bmp.close?.();
+      if (mine !== serial) return;
+      pic = ctx.getImageData(0, 0, width, height);
+    } catch (e) {
+      if (mine === serial) failed = true;
+    }
+    api.ready();
+  }
+  return Object.assign(api, {
+    // from the paste event: true when it held a picture
+    take(data) {
+      const item = [...(data?.items ?? [])].find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+      const blob = item?.getAsFile();
+      if (!blob) return false;
+      decode(blob);
+      return true;
+    },
+    request() {
+      if (!navigator.clipboard?.read) { failed = true; api.ready(); return; }
+      navigator.clipboard.read().then((items) => {
+        for (const it of items) {
+          const type = it.types.find((t) => t.startsWith('image/'));
+          if (type) return it.getType(type).then(decode);
+        }
+        failed = true; api.ready();
+      }, () => { failed = true; api.ready(); });
+    },
+    state() {
+      if (pic) return 1;
+      if (failed) { failed = false; return 2; }
+      return 0;
+    },
+    width: () => (pic ? pic.width : 0),
+    height: () => (pic ? pic.height : 0),
+    grab(out, w, h) {
+      if (!pic || pic.width !== w || pic.height !== h) return false;
+      out.set(pic.data);
+      pic = null;
+      return true;
+    },
+  });
+}
+
 // One address per page: <site>/phantom-forest/ and so on, where <site> is the folder above js/ (the
 // site can live under a path, like GitHub Pages' /<repo>/). The deploy gives each page a folder with a
 // copy of index.html, so an address opened directly loads the app too.
@@ -144,6 +203,7 @@ function routeName() {
 
 export async function mount(canvas, wasmUrl, opts = {}) {
   const media = mediaLayer(canvas);
+  const pasted = pastedPicture();
   loadGifs(); // needed only by the time someone rolls
   let routeSerial = 1, onRoute = () => {};
   window.addEventListener('popstate', () => { routeSerial++; onRoute(); });
@@ -160,6 +220,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     mediaPlace: (...a) => media.place(...a),
     gifs: () => gifList,
     share: navigator.mediaDevices?.getDisplayMedia ? screenShare() : null,
+    paste: pasted,
     touchOnly: () => matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches,
     clipboardSet: (t) => navigator.clipboard?.writeText(t).catch(() => {}),
     // settings survive a reload; storage can be missing or throw (private mode, blocked site data)
@@ -221,6 +282,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
   const schedule = () => { if (!raf) raf = requestAnimationFrame(step); };
   const poke = () => { dirty = true; schedule(); };
   onRoute = poke;
+  pasted.ready = poke;
   function paint() {
     if (gl) { gl.draw(mod, inst); return; }
     const px = mod.pixels(inst);
@@ -406,6 +468,7 @@ export async function mount(canvas, wasmUrl, opts = {}) {
     poke();
   });
   on('paste', (e) => {
+    if (pasted.take(e.clipboardData)) { e.preventDefault(); poke(); return; }   // a picture: the reader takes it
     const text = e.clipboardData?.getData('text/plain') ?? '';
     mod.setClipboardCache(text);
     x.inst_key(inst, KEYS.KeyV, 1, pasteMods || 2);
